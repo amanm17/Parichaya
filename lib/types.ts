@@ -20,6 +20,7 @@ export type Person = {
   death_year?: number | null;
   description?: string | null;
   photo_url?: string | null;
+  honorary?: boolean | null;
 };
 
 export type Relationship = {
