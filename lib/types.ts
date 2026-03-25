@@ -27,8 +27,9 @@ export type Relationship = {
   id: string;
   from_person: string;
   to_person: string;
-  relation_type: RelationType;
+  relation_type: string;
   note?: string | null;
+  relation_label?: string | null;
 };
 
 export type UpdateItem = {

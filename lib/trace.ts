@@ -1,108 +1,215 @@
-import { Person, Relationship } from '@/lib/types';
+import type { Person, Relationship } from '@/lib/types';
 
 export type TraceResult = {
   primaryPath: string[];
-  alternates: string[][];
+  alternatePaths: string[][];
   explanation: string;
-  pathLabels: string[];
+  pathType: string;
   side: string;
+  pathLabels: string[];
 };
 
-function neighbors(id: string, relationships: Relationship[]) {
-  return relationships
-    .filter((edge) => edge.from_person === id || edge.to_person === id)
-    .map((edge) => ({
-      personId: edge.from_person === id ? edge.to_person : edge.from_person,
-      relationType: edge.relation_type,
-      reversed: edge.to_person === id
-    }));
-}
+function neighborsOf(personId: string, relationships: Relationship[]) {
+  const neighbors: string[] = [];
 
-function edgeWeight(type: Relationship['relation_type']) {
-  switch (type) {
-    case 'parent':
-    case 'child':
-      return 1;
-    case 'sibling':
-      return 1.15;
-    case 'spouse':
-    case 'partner':
-      return 1.25;
-    case 'honorary':
-      return 2.2;
-    default:
-      return 1.6;
+  for (const rel of relationships) {
+    if (rel.from_person === personId) neighbors.push(rel.to_person);
+    if (rel.to_person === personId) neighbors.push(rel.from_person);
   }
+
+  return [...new Set(neighbors)];
 }
 
-export function findShortestPath(start: string, end: string, relationships: Relationship[]) {
-  const distances = new Map<string, number>([[start, 0]]);
-  const previous = new Map<string, { node: string; relationType: Relationship['relation_type']; reversed: boolean }>();
-  const queue = new Set<string>([start]);
+function bfsShortestPath(
+  startId: string,
+  endId: string,
+  relationships: Relationship[]
+): string[] | null {
+  if (startId === endId) return [startId];
 
-  while (queue.size > 0) {
-    const current = [...queue].sort((a, b) => (distances.get(a)! - distances.get(b)!))[0];
-    queue.delete(current);
+  const queue: string[][] = [[startId]];
+  const visited = new Set<string>([startId]);
 
-    if (current === end) break;
+  while (queue.length > 0) {
+    const path = queue.shift()!;
+    const current = path[path.length - 1];
 
-    for (const next of neighbors(current, relationships)) {
-      const candidate = (distances.get(current) ?? Infinity) + edgeWeight(next.relationType);
-      if (candidate < (distances.get(next.personId) ?? Infinity)) {
-        distances.set(next.personId, candidate);
-        previous.set(next.personId, { node: current, relationType: next.relationType, reversed: next.reversed });
-        queue.add(next.personId);
-      }
+    for (const neighbor of neighborsOf(current, relationships)) {
+      if (visited.has(neighbor)) continue;
+
+      const nextPath = [...path, neighbor];
+      if (neighbor === endId) return nextPath;
+
+      visited.add(neighbor);
+      queue.push(nextPath);
     }
   }
 
-  if (!previous.has(end) && start !== end) return null;
+  return null;
+}
 
-  const path: string[] = [end];
-  const edges: { relationType: Relationship['relation_type']; reversed: boolean }[] = [];
-  let cursor = end;
+function bfsAlternatePaths(
+  startId: string,
+  endId: string,
+  relationships: Relationship[],
+  maxExtraSteps = 1,
+  maxAlternates = 3
+): string[][] {
+  const shortest = bfsShortestPath(startId, endId, relationships);
+  if (!shortest) return [];
 
-  while (cursor !== start) {
-    const prev = previous.get(cursor);
-    if (!prev) break;
-    edges.unshift({ relationType: prev.relationType, reversed: prev.reversed });
-    path.unshift(prev.node);
-    cursor = prev.node;
+  const targetLength = shortest.length + maxExtraSteps;
+  const queue: string[][] = [[startId]];
+  const results: string[][] = [];
+
+  while (queue.length > 0 && results.length < maxAlternates) {
+    const path = queue.shift()!;
+    const current = path[path.length - 1];
+
+    if (path.length > targetLength) continue;
+
+    for (const neighbor of neighborsOf(current, relationships)) {
+      if (path.includes(neighbor)) continue;
+
+      const nextPath = [...path, neighbor];
+
+      if (neighbor === endId) {
+        if (
+          nextPath.length >= shortest.length &&
+          nextPath.length <= targetLength &&
+          nextPath.join('|') !== shortest.join('|')
+        ) {
+          results.push(nextPath);
+        }
+        continue;
+      }
+
+      queue.push(nextPath);
+    }
   }
 
-  return { path, edges, distance: distances.get(end) ?? 0 };
+  return results;
 }
 
-function humanizeStep(relationType: Relationship['relation_type'], reversed: boolean) {
-  if (relationType === 'parent') return reversed ? 'child' : 'parent';
-  if (relationType === 'spouse') return 'spouse';
-  if (relationType === 'partner') return 'partner';
-  if (relationType === 'sibling') return 'sibling';
-  if (relationType === 'honorary') return 'honorary connection';
-  return relationType.replace('_', ' ');
+function findPersonName(id: string, persons: Person[]) {
+  return persons.find((p) => p.id === id)?.name ?? 'Unknown member';
 }
 
-export function buildTraceResult(start: string, end: string, people: Person[], relationships: Relationship[]): TraceResult | null {
-  const result = findShortestPath(start, end, relationships);
-  if (!result) return null;
+function relationBetween(a: string, b: string, relationships: Relationship[]) {
+  const rel = relationships.find(
+    (r) =>
+      (r.from_person === a && r.to_person === b) ||
+      (r.from_person === b && r.to_person === a)
+  );
 
-  const byId = new Map(people.map((p) => [p.id, p]));
-  const pathLabels = result.path.map((id) => byId.get(id)?.name ?? id);
-  const descriptors = result.edges.map((edge) => humanizeStep(edge.relationType, edge.reversed));
+  return rel?.relation_type ?? 'connected to';
+}
 
-  const explanation = descriptors.length === 0
-    ? `${pathLabels[0]} is the same person.`
-    : `${pathLabels[0]} → ${descriptors.join(' → ')} → ${pathLabels[pathLabels.length - 1]}`;
+function humanizeRelationType(type: string) {
+  switch (type) {
+    case 'parent':
+      return 'parent/child';
+    case 'spouse':
+      return 'spouse';
+    case 'sibling':
+      return 'sibling';
+    case 'honorary':
+      return 'honorary family connection';
+    default:
+      return type;
+  }
+}
 
-  const side = descriptors.some((d) => d === 'spouse' || d === 'partner')
-    ? 'Mixed · By marriage'
-    : 'Direct bloodline or close structural path';
+function inferPathType(path: string[], relationships: Relationship[]) {
+  let hasSpouse = false;
+  let hasHonorary = false;
 
+  for (let i = 0; i < path.length - 1; i++) {
+    const rel = relationBetween(path[i], path[i + 1], relationships);
+    if (rel === 'spouse') hasSpouse = true;
+    if (rel === 'honorary') hasHonorary = true;
+  }
+
+  if (hasHonorary) return 'Honorary / exceptional connection';
+  if (hasSpouse) return 'By marriage / mixed family path';
+  return 'Direct family path';
+}
+
+function inferSide(path: string[], relationships: Relationship[]) {
+  let hasSpouse = false;
+  let hasHonorary = false;
+
+  for (let i = 0; i < path.length - 1; i++) {
+    const rel = relationBetween(path[i], path[i + 1], relationships);
+    if (rel === 'spouse') hasSpouse = true;
+    if (rel === 'honorary') hasHonorary = true;
+  }
+
+  if (hasHonorary) return 'Honorary';
+  if (hasSpouse) return 'By marriage';
+  return 'Direct / lineage side';
+}
+
+function buildExplanation(
+  path: string[],
+  persons: Person[],
+  relationships: Relationship[]
+) {
+  if (path.length === 1) {
+    return `${findPersonName(path[0], persons)} is the same person selected at both ends.`;
+  }
+
+  const parts: string[] = [];
+
+  for (let i = 0; i < path.length - 1; i++) {
+    const fromName = findPersonName(path[i], persons);
+    const toName = findPersonName(path[i + 1], persons);
+    const rel = humanizeRelationType(relationBetween(path[i], path[i + 1], relationships));
+    parts.push(`${fromName} → ${rel} → ${toName}`);
+  }
+
+  return parts.join(' | ');
+}
+
+function buildPathLabels(path: string[], persons: Person[]) {
+  return path.map((id) => findPersonName(id, persons));
+}
+
+function assembleTraceResult(
+  primaryPath: string[],
+  persons: Person[],
+  relationships: Relationship[],
+  alternatePaths: string[][] = []
+): TraceResult {
   return {
-    primaryPath: result.path,
-    alternates: [],
-    explanation,
-    pathLabels,
-    side
+    primaryPath,
+    alternatePaths,
+    explanation: buildExplanation(primaryPath, persons, relationships),
+    pathType: inferPathType(primaryPath, relationships),
+    side: inferSide(primaryPath, relationships),
+    pathLabels: buildPathLabels(primaryPath, persons),
   };
+}
+
+export function buildTraceResult(
+  startId: string,
+  endId: string,
+  persons: Person[],
+  relationships: Relationship[]
+): TraceResult | null {
+  const primaryPath = bfsShortestPath(startId, endId, relationships);
+  if (!primaryPath) return null;
+
+  const alternatePaths = bfsAlternatePaths(startId, endId, relationships);
+
+  return assembleTraceResult(primaryPath, persons, relationships, alternatePaths);
+}
+
+export function traceRelation(
+  startId: string,
+  endId: string,
+  persons: Person[],
+  relationships: Relationship[]
+): TraceResult | null {
+  return buildTraceResult(startId, endId, persons, relationships);
 }
