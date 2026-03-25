@@ -1,0 +1,34 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html, body {
+  min-height: 100%;
+}
+
+body {
+  @apply bg-parchment text-slate-800;
+  background-image:
+    radial-gradient(circle at top right, rgba(221,195,127,0.18), transparent 28%),
+    radial-gradient(circle at left bottom, rgba(111,156,112,0.12), transparent 32%);
+}
+
+.react-flow__attribution {
+  display: none;
+}
+
+.card {
+  @apply rounded-[1.5rem] border border-white/60 bg-white/80 shadow-card backdrop-blur;
+}
+
+.section-title {
+  @apply text-2xl font-semibold tracking-tight text-moss;
+}
+
+.muted {
+  @apply text-sm text-slate-600;
+}
