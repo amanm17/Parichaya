@@ -58,3 +58,4 @@ Open `http://localhost:3000`.
 - Without Supabase configured, the app falls back to sample in-memory data so you can still preview the UI.
 - The add-member page saves records only when Supabase is configured.
 - The trace engine in this MVP highlights the most direct known path. Alternate near-direct traces can be added later.
+# Parichaya
